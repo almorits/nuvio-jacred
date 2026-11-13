@@ -207,7 +207,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         title: line1 + "\n" + line2,
         url: magnet,
         quality: quality,
-        size: sizeBytes || undefined,
+        size: sizeStr || undefined,
         seeders: seeders || undefined,
         infoHash: infoHash || undefined,
         headers: {},
