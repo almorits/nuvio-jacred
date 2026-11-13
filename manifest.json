@@ -1,0 +1,19 @@
+{
+  "name": "JacRed",
+  "version": "1.0.0",
+  "scrapers": [
+    {
+      "id": "jacred",
+      "name": "JacRed",
+      "description": "Torrent search via JacRed/Jackett API (P2P, TorrServer)",
+      "version": "1.0.0",
+      "author": "amorits",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/jacred.js",
+      "enabled": true,
+      "hasSettings": true,
+      "formats": ["mkv", "mp4", "avi"],
+      "contentLanguage": ["ru", "en"]
+    }
+  ]
+}
