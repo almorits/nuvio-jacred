@@ -138,6 +138,53 @@ function humanSize(bytes) {
   return (n / 1048576).toFixed(0) + " MB";
 }
 
+function parseAudioTags(title) {
+  var s = String(title || "");
+  var tags = [];
+  if (/dub\b|дублирован/i.test(s)) tags.push("DUB");
+  if (/mvo\b|мvo\b|многоголос/i.test(s)) tags.push("MVO");
+  if (/avo\b|авторск/i.test(s)) tags.push("AVO");
+  if (/l1\b|одноголос/i.test(s)) tags.push("L1");
+  var st = /jaskier|new ?studio|hdrezka|lostfilm|кубик ?в ?кубе|flarrow|le_?prod|redheadsound|anilibria|itunes|tvshows|coldfilm|baibako/i.exec(s);
+  if (st) tags.push(st[0].toUpperCase());
+  if (/sub\b|субтитр/i.test(s)) tags.push("SUB");
+  if (/ukr\b|україн|укр\./i.test(s)) tags.push("UKR");
+  return tags;
+}
+
+function tvMatch(title, season, episode) {
+  var s = " " + String(title || "").toLowerCase() + " ";
+  var ss = season < 10 ? "0" + season : "" + season;
+  var ee = episode < 10 ? "0" + episode : "" + episode;
+  if (s.indexOf("s" + ss + "e" + ee) >= 0) return true;
+  if (s.indexOf(ss + "x" + ee) >= 0) return true;
+  var m = /s(\d{1,2})\s*e(\d{1,2})\s*[-–]\s*e?(\d{1,2})/.exec(s);
+  if (m && +m[1] === season && episode >= +m[2] && episode <= +m[3]) return true;
+  m = /(\d{1,2})x(\d{1,2})\s*[-–]\s*(\d{1,2})/.exec(s);
+  if (m && +m[1] === season && episode >= +m[2] && episode <= +m[3]) return true;
+
+  var seas = null;
+  m = /(\d{1,2})\s*[-–]\s*(\d{1,2})\s*сезон/i.exec(s); if (m) seas = [+m[1], +m[2]];
+  if (!seas) { m = /(\d{1,2})\s*сезон/i.exec(s); if (m) seas = [+m[1], +m[1]]; }
+  if (!seas) { m = /сезон\s*[:№#\-]?\s*0*(\d{1,2})(?!\d)/i.exec(s); if (m) seas = [+m[1], +m[1]]; }
+  if (!seas) { m = /season\s*0*(\d{1,2})(?!\d)/i.exec(s); if (m) seas = [+m[1], +m[1]]; }
+  if (!seas) { m = /s(\d{2})(?!\d|e)/i.exec(s); if (m) seas = [+m[1], +m[1]]; }
+  var seasonOk = seas ? (season >= seas[0] && season <= seas[1]) : null;
+
+  m = /сери[йя]\s*[:№#\-]?\s*0*(\d{1,3})(?!\d)/i.exec(s);
+  if (m && +m[1] === episode && seasonOk !== false) return true;
+  m = /серии?\s*[:№#\-]?\s*0*(\d{1,3})\s*[-–]\s*0*(\d{1,3})/i.exec(s)
+    || /(\d{1,3})\s*[-–]\s*(\d{1,3})\s*сер/i.exec(s);
+  if (m && episode >= +m[1] && episode <= +m[2] && seasonOk !== false) return true;
+
+  var hasEpNums = /s\d{1,2}\s*e\d{1,2}|\d{1,2}x\d{1,2}|сери/i.test(s);
+  if (!hasEpNums) {
+    if (new RegExp("s0*" + season + "(?![0-9])").test(s)) return true;
+    if (seasonOk === true) return true;
+  }
+  return false;
+}
+
 function infoHashOf(magnet) {
   var m = /btih:([0-9a-fA-F]{32,40})/i.exec(String(magnet || ""));
   return m ? m[1].toLowerCase() : null;
@@ -178,6 +225,17 @@ function getStreams(tmdbId, mediaType, season, episode) {
       results = yield jackettSearch(query);
     }
 
+    if (isTv && season && episode) {
+      var filtered = results.filter(function (r) {
+        return tvMatch(r && r.Title, season, episode);
+      });
+      if (filtered.length) results = filtered;
+    }
+
+    var wantAudio = String(cfg().audioFilter || "").toLowerCase().split(",")
+      .map(function (t) { return t.trim(); }).filter(Boolean);
+    var boostAudio = String(cfg().preferredAudio || "").trim().toLowerCase();
+
     var seen = {};
     var out = [];
     results.forEach(function (r) {
@@ -193,37 +251,44 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var sizeBytes = Number(r.Size) || 0;
       var sizeStr = humanSize(sizeBytes) || info.sizeName || "";
       var tracker = String(r.Tracker || "");
+      var audioTags = parseAudioTags(r.Title);
+      var lowerTags = audioTags.map(function (t) { return t.toLowerCase(); });
 
-      var line1 = String(r.Title || "").slice(0, 200);
-      var line2 = [
-        tracker,
-        seeders ? "👤 " + seeders : "",
+      if (wantAudio.length && !wantAudio.some(function (w) { return lowerTags.indexOf(w) >= 0; })) return;
+
+      var relTitle = String(r.Title || "").slice(0, 200);
+      var metaLine = [
+        seeders ? "\u{1F464} " + seeders : "",
         sizeStr,
-        info.videotype ? String(info.videotype).toUpperCase() : ""
+        tracker,
+        audioTags.join("/") || ""
       ].filter(Boolean).join(" • ");
 
       out.push({
-        name: "JacRed " + quality,
-        title: line1 + "\n" + line2,
+        name: relTitle,
+        title: relTitle,
         url: magnet,
         quality: quality,
-        size: sizeStr || undefined,
+        size: metaLine || relTitle,
         seeders: seeders || undefined,
         infoHash: infoHash || undefined,
         headers: {},
         subtitles: [],
         _rank: qualityRank(quality),
-        _seeders: seeders
+        _seeders: seeders,
+        _audio: boostAudio && lowerTags.indexOf(boostAudio) >= 0 ? 1 : 0
       });
     });
 
     out.sort(function (a, b) {
+      if (b._audio !== a._audio) return b._audio - a._audio;
       if (b._rank !== a._rank) return b._rank - a._rank;
       return (b._seeders || 0) - (a._seeders || 0);
     });
     return out.slice(0, 30).map(function (s) {
       delete s._rank;
       delete s._seeders;
+      delete s._audio;
       return s;
     });
   });
@@ -246,6 +311,21 @@ function onSettings() {
       placeholder: "api key",
       isPassword: true,
       description: "API key from the server"
+    },
+    { type: "header", label: "Audio & subtitles" },
+    {
+      type: "text",
+      key: "audioFilter",
+      label: "Require tracks",
+      placeholder: "e.g. dub, mvo",
+      description: "Comma-separated audio/sub tags a release must have (DUB, MVO, AVO, L1, SUB, UKR, studio names). Empty = all"
+    },
+    {
+      type: "text",
+      key: "preferredAudio",
+      label: "Prefer track",
+      placeholder: "e.g. dub",
+      description: "Matching releases are shown first"
     }
   ];
 }
